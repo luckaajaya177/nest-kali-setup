@@ -1,0 +1,3 @@
+@echo off
+REM Switch Firmware Validator wrapper
+python "%~dp0..\tools\console-exploit\switch_validator.py" %*
