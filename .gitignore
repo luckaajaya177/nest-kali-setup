@@ -8,3 +8,25 @@ __pycache__/
 logs/
 *.log
 
+
+# Large data directories
+reports/
+ape-cyber-range/
+ape-lab/
+ape-lab-enterprise/
+kali-exploitation/
+advanced-exploitation/
+tools/burpsuite-v2/
+tools/shadow/
+exploit-results/
+manual-exploitation-results/
+explore-results/
+cors-scan-results/
+samesite-bypass-results/
+--quick/
+*.db
+custom_burp.*
+*.pcap
+*.pcapng
+firmwares/
+firmware/
