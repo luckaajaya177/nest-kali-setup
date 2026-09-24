@@ -74,6 +74,8 @@ class Script:
             self.hash = hashlib.sha256(self.content.encode()).hexdigest()[:16]
         if not self.created:
             self.created = time.time()
+        # Calculate size
+        self.size = len(self.content.encode('utf-8'))
 
 
 @dataclass
@@ -132,6 +134,12 @@ class NestCore:
         self.port = self.config.get("port", DEFAULT_PORT)
         self._thread = None
         self._running = False
+        self.platform_config = self._detect_platform()
+    
+    @abstractmethod
+    def _detect_platform(self) -> PlatformConfig:
+        """Detect current platform."""
+        pass
         
     def initialize(self) -> bool:
         """Initialize the core engine."""
@@ -143,11 +151,20 @@ class NestCore:
             print(f"[NestCore] Initialization failed: {e}")
             return False
     
-    def _validate_platform(self):
-        """Validate current platform."""
+    def _detect_platform(self) -> PlatformConfig:
+        """Detect current platform and return config."""
         system = platform.system().lower()
-        if system not in [PLATFORM_WIN, PLATFORM_MAC, PLATFORM_LINUX, PLATFORM_ANDROID, PLATFORM_IOS]:
-            raise ValueError(f"Unsupported platform: {system}")
+        arch = platform.machine().lower()
+        
+        configs = {
+            PLATFORM_WIN: PlatformConfig(name="windows", arch=arch, executable_name="RobloxPlayerBeta.exe", injection_method="dll"),
+            PLATFORM_MAC: PlatformConfig(name="darwin", arch=arch, executable_name="RobloxApp.app", injection_method="ptrace"),
+            PLATFORM_LINUX: PlatformConfig(name="linux", arch=arch, executable_name="RobloxPlayerBeta", injection_method="ptrace"),
+            PLATFORM_ANDROID: PlatformConfig(name="android", arch=arch, executable_name="com.roblox.client", is_mobile=True, injection_method="frida"),
+            PLATFORM_IOS: PlatformConfig(name="ios", arch=arch, executable_name="Roblox", is_mobile=True, requires_jailbreak=True, injection_method="frida"),
+        }
+        
+        return configs.get(system, configs[PLATFORM_WIN])
     
     def start_server(self) -> bool:
         """Start IPC server for cross-process communication."""
@@ -910,6 +927,88 @@ class ExecutorFactory:
         elif "android" in system:
             return PLATFORM_ANDROID
         return PLATFORM_WIN  # Default fallback
+
+
+# ============================================================
+# IPC CLIENT FOR CROSS-PLATFORM COMMUNICATION
+# ============================================================
+
+class NestCoreClient:
+    """Client for communicating with NestCore via IPC."""
+    
+    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT):
+        self.host = host
+        self.port = port
+        self.connected = False
+        self.socket = None
+    
+    def connect(self) -> bool:
+        """Connect to NestCore server."""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((self.host, self.port))
+            self.connected = True
+            return True
+        except Exception as e:
+            print(f"[NestCoreClient] Connection failed: {e}")
+            return False
+    
+    def disconnect(self):
+        """Disconnect from server."""
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+            self.socket = None
+            self.connected = False
+    
+    def send_request(self, request: Dict) -> Dict:
+        """Send request and receive response."""
+        if not self.connected:
+            if not self.connect():
+                return {"error": "Not connected"}
+        
+        try:
+            data = json.dumps(request).encode('utf-8')
+            # Send length prefix
+            self.socket.sendall(struct.pack('I', len(data)) + data)
+            
+            # Receive response
+            response_data = b""
+            while True:
+                chunk = self.socket.recv(4096)
+                if not chunk:
+                    break
+                response_data += chunk
+                
+                if len(response_data) >= 4:
+                    length = struct.unpack('I', response_data[:4])[0]
+                    if len(response_data) >= 4 + length:
+                        break
+            
+            if response_data:
+                return json.loads(response_data[4:].decode('utf-8'))
+            return {}
+        except Exception as e:
+            print(f"[NestCoreClient] Send error: {e}")
+            return {"error": str(e)}
+    
+    def get_status(self) -> Dict:
+        """Get executor status."""
+        return self.send_request({"command": "get_status"})
+    
+    def execute_script(self, script_hash: str) -> Dict:
+        """Execute script by hash."""
+        return self.send_request({"command": "execute", "hash": script_hash})
+    
+    def list_scripts(self) -> Dict:
+        """List all scripts."""
+        return self.send_request({"command": "list_scripts"})
+    
+    def inject(self, platform: str = "windows") -> Dict:
+        """Request injection."""
+        return self.send_request({"command": "inject", "platform": platform})
 
 
 # ============================================================
